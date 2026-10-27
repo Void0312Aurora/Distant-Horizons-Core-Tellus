@@ -600,6 +600,18 @@ public class ClientApi
 						boolean renderingCancelled = ApiEventInjector.INSTANCE.fireAllEvents(DhApiBeforeRenderEvent.class, RENDER_PARAMS);
 						if (!renderingCancelled)
 						{
+							// Iris changes deferTransparentRendering from the event above.
+							// Recompute the pass after that callback so the first shader
+							// frame is not left as OPAQUE_AND_TRANSPARENT.
+							if (DhApiRenderProxy.INSTANCE.getDeferTransparentRendering())
+							{
+								renderPass = EDhApiRenderPass.OPAQUE;
+							}
+							else
+							{
+								renderPass = EDhApiRenderPass.OPAQUE_AND_TRANSPARENT;
+							}
+							RENDER_PARAMS.update(renderPass, RENDER_STATE);
 							LodRenderer.INSTANCE.render(RENDER_PARAMS, profiler);
 						}
 						

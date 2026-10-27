@@ -61,6 +61,8 @@ public class FullDataSourceV2DTO
 	public static class DATA_FORMAT
 	{
 		public static final int V1_NO_ADJACENT_DATA = 1;
+		/** Written by the previous Tellus height fork; its payload uses the V2 encoding. */
+		public static final int V3_TELLUS_TALL_Y = 3;
 		public static final int V2_LATEST = 2;
 	}
 	
@@ -200,10 +202,11 @@ public class FullDataSourceV2DTO
 	{
 		// format validation //
 		
-		if (this.dataFormatVersion != DATA_FORMAT.V1_NO_ADJACENT_DATA 
-			&& this.dataFormatVersion != DATA_FORMAT.V2_LATEST)
+		if (this.dataFormatVersion != DATA_FORMAT.V1_NO_ADJACENT_DATA
+			&& this.dataFormatVersion != DATA_FORMAT.V2_LATEST
+			&& this.dataFormatVersion != DATA_FORMAT.V3_TELLUS_TALL_Y)
 		{
-			throw new IllegalStateException("Data source population only supports formats: ["+DATA_FORMAT.V1_NO_ADJACENT_DATA +","+DATA_FORMAT.V2_LATEST +"], data format found: ["+this.dataFormatVersion+"].");
+			throw new IllegalStateException("Data source population only supports formats: ["+DATA_FORMAT.V1_NO_ADJACENT_DATA+","+DATA_FORMAT.V2_LATEST+","+DATA_FORMAT.V3_TELLUS_TALL_Y+"], data format found: ["+this.dataFormatVersion+"].");
 		}
 		
 		if (direction != null
@@ -336,7 +339,14 @@ public class FullDataSourceV2DTO
 				// write column data (will be skipped if no data was present)
 				for (int y = 0; y < columnLength; y++)
 				{
-					compressedOut.writeLong(dataColumn.getLong(y));
+					try
+					{
+						compressedOut.writeLong(FullDataPointUtil.toLegacyDataPoint(dataColumn.getLong(y)));
+					}
+					catch (DataCorruptedException e)
+					{
+						throw new IOException(e);
+					}
 				}
 			}
 		}
@@ -365,7 +375,7 @@ public class FullDataSourceV2DTO
 				// read column data (will be skipped if no data was present)
 				for (int y = 0; y < dataColumnLength; y++)
 				{
-					long dataPoint = compressedIn.readLong();
+					long dataPoint = FullDataPointUtil.fromLegacyDataPoint(compressedIn.readLong());
 					if (VALIDATE_INPUT_DATAPOINTS)
 					{
 						FullDataPointUtil.validateDatapoint(dataPoint);

@@ -400,7 +400,7 @@ public class GeneratedFullDataSourceProvider extends FullDataSourceProviderV2 im
 						byte genStepByte = columnGenStepArray.getByte(i);
 						if (genStepByte == EDhApiWorldGenerationStep.EMPTY.value
 							|| genStepByte == EDhApiWorldGenerationStep.DOWN_SAMPLED.value
-							|| genStepByte <= requiredWorldGenStep.value)
+							|| genStepByte < requiredWorldGenStep.value)
 						{
 							positionFullyGenerated = false;
 							break;

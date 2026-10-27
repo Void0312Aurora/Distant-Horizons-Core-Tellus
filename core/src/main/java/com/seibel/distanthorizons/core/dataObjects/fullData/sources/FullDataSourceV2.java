@@ -1123,20 +1123,6 @@ public class FullDataSourceV2
 				int inputIndex = relativePosToIndex(inputX, inputZ);
 				
 				
-				// world gen //
-				
-				// a separate generation step needs to be used so can replace
-				// this data with higher-quality data when it is available
-				byte inputGenStep = EDhApiWorldGenerationStep.DOWN_SAMPLED.value;
-				this.columnGenerationSteps.set(recipientIndex, inputGenStep);
-				
-				
-				// world compression //
-				byte worldCompressionMode = inputDataSource.columnWorldCompressionMode.getByte(recipientIndex);
-				this.columnWorldCompressionMode.set(recipientIndex, worldCompressionMode);
-				
-				
-				
 				// data points //
 				
 				// check if this column should be downsampled
@@ -1160,12 +1146,19 @@ public class FullDataSourceV2
 				
 				if (downSampleColumn)
 				{
+					// Mark only columns that actually receive lower-detail data.
+					// Existing generated child columns must retain their metadata.
+					this.columnGenerationSteps.set(recipientIndex, EDhApiWorldGenerationStep.DOWN_SAMPLED.value);
+					this.columnWorldCompressionMode.set(
+						recipientIndex,
+						inputDataSource.columnWorldCompressionMode.getByte(inputIndex));
+
 					LongArrayList inputDataArray = inputDataSource.dataPoints[inputIndex];
-					
-					// copy over the new data, this is necessary to prevent remapping issues
+					// Parent and child data sources use independently pooled columns.
+					// Sharing this reference lets ID remapping mutate the parent and
+					// leaves child data pointing at storage that the parent later releases.
 					this.dataPoints[recipientIndex].clear();
 					this.dataPoints[recipientIndex].addAll(inputDataArray);
-					
 					this.remapDataColumn(recipientIndex, remappedIds);
 					
 					if (RUN_DATA_ORDER_VALIDATION)
