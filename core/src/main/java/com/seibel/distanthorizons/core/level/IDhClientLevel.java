@@ -23,6 +23,8 @@ import com.seibel.distanthorizons.core.logging.f3.F3Screen;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.UUID;
+
 /**
  * Used when running in singleplayer
  * or when connected to a server.
@@ -45,6 +47,15 @@ public interface IDhClientLevel extends IDhLevel
 	 * Designed for use for debugging and the {@link F3Screen}.
 	 */
 	boolean isRendering();
+
+	/** Starts a render-only seam transition at the target planar center. */
+	boolean beginSeamTransition(UUID transitionId, int targetBlockX, int targetBlockZ);
+
+	/** Returns true after the target DH envelope has uploaded renderable sections. */
+	boolean isSeamTransitionReady(UUID transitionId);
+
+	/** Commits or rolls back a render-only seam transition. */
+	void endSeamTransition(UUID transitionId, boolean committed);
 	
 	
 	

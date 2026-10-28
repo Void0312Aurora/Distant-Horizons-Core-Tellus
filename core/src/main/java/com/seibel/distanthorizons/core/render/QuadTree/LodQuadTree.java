@@ -152,6 +152,17 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	private ArrayList<LodRenderSection> altEnabledSections = new ArrayList<>();
 	/** This lock should be very quick since it will be used on the render thread */ 
 	private final ReentrantLock enabledRenderSectionLock = new ReentrantLock();
+
+	/**
+	 * A seam transition temporarily renders a second DH envelope before the
+	 * Minecraft camera is rebased.  The source sections are retained while the
+	 * target tree is populated so a slow target request cannot expose a blank
+	 * remote view.
+	 */
+	@Nullable
+	private volatile Transition transition;
+	private final Map<Long, LodRenderSection> retainedTransitionSections = new ConcurrentHashMap<>();
+	private volatile DhBlockPos2D detailCenterBlockPos;
 	
 	
 	
@@ -215,6 +226,117 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			this.enabledRenderSectionLock.unlock();
 		}
 	}
+
+	public DhBlockPos2D getDetailCenterBlockPos()
+	{
+		DhBlockPos2D center = this.detailCenterBlockPos;
+		return center == null ? this.getCenterBlockPos() : center;
+	}
+
+	/** Starts a render-only transition without creating native Minecraft chunks. */
+	public synchronized boolean beginSeamTransition(UUID transitionId, DhBlockPos2D targetCenter)
+	{
+		if (transitionId == null || targetCenter == null) return false;
+		if (this.transition != null)
+		{
+			return this.transition.id.equals(transitionId)
+				&& this.transition.targetCenter.equals(targetCenter);
+		}
+		this.transition = new Transition(transitionId, this.getCenterBlockPos(), targetCenter);
+		return true;
+	}
+
+	/** Returns true only after the target envelope has renderable uploaded sections. */
+	public synchronized boolean isSeamTransitionReady(UUID transitionId)
+	{
+		Transition current = this.transition;
+		if (current == null || !current.id.equals(transitionId)
+			|| !current.sourceCaptured || !current.observed)
+		{
+			return false;
+		}
+
+		this.treeTickLock.lock();
+		try
+		{
+			boolean targetSectionPresent = false;
+			this.enabledRenderSectionLock.lock();
+			try
+			{
+				for (LodRenderSection section : this.enabledSections)
+				{
+					if (this.retainedTransitionSections.containsKey(section.pos)) continue;
+					if (!this.isSectionPosInBounds(section.pos)) continue;
+					targetSectionPresent = true;
+					if (!section.gpuUploadComplete()) return false;
+				}
+			}
+			finally
+			{
+				this.enabledRenderSectionLock.unlock();
+			}
+			if (!targetSectionPresent) return false;
+
+			for (Long pos : this.missingGenerationPosSet)
+			{
+				if (this.isSectionPosInBounds(pos)) return false;
+			}
+			for (Long pos : this.queuedGenerationPosSet)
+			{
+				if (this.isSectionPosInBounds(pos)) return false;
+			}
+			return true;
+		}
+		finally
+		{
+			this.treeTickLock.unlock();
+		}
+	}
+
+	/** Commits or rolls back a render-only transition. */
+	public synchronized void endSeamTransition(UUID transitionId, boolean committed)
+	{
+		Transition current = this.transition;
+		if (current == null || !current.id.equals(transitionId)) return;
+
+		this.treeTickLock.lock();
+		try
+		{
+			this.transition = null;
+			if (committed)
+			{
+				for (LodRenderSection section : this.retainedTransitionSections.values())
+				{
+					section.close();
+				}
+				this.retainedTransitionSections.clear();
+				return;
+			}
+
+			// Return the tree to the source center and put retained source sections
+			// back where they can be reused by the next tree tick.
+			this.detailCenterBlockPos = current.sourceCenter;
+			this.setCenterBlockPos(current.sourceCenter,
+				section -> { if (section != null) section.close(); },
+				section -> { if (section != null) section.renderDataDirty = true; });
+			for (LodRenderSection section : this.retainedTransitionSections.values())
+			{
+				if (this.isSectionPosInBounds(section.pos) && this.tryGetValue(section.pos) == null)
+				{
+					this.setValue(section.pos, section);
+				}
+				else
+				{
+					section.close();
+				}
+			}
+			this.retainedTransitionSections.clear();
+		}
+		finally
+		{
+			this.treeTickLock.unlock();
+		}
+	}
 	
 	//endregion property getters
 	
@@ -247,7 +369,10 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			
 			try
 			{
-				this.updateAllRenderSections(playerPos);
+				Transition activeTransition = this.transition;
+				DhBlockPos2D effectivePlayerPos = activeTransition == null
+					? playerPos : activeTransition.targetCenter;
+				this.updateAllRenderSections(effectivePlayerPos);
 			}
 			catch (Exception e)
 			{
@@ -261,6 +386,9 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	}
 	private void updateAllRenderSections(DhBlockPos2D playerPos)
 	{
+		Transition activeTransition = this.transition;
+		boolean retainingSource = activeTransition != null && !activeTransition.sourceCaptured;
+		this.detailCenterBlockPos = playerPos;
 		// this data will be updated as we walk through the tree
 		this.tickNodeHolder.clear();
 		
@@ -271,13 +399,19 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 		//region
 		
 		// remove out of bound sections
-		this.setCenterBlockPos(playerPos, 
+		this.setCenterBlockPos(playerPos,
 			// remove completely out of bound nodes
 			// (the root node is no longer in bounds)
 			(renderSection) ->
 			{
 				if (renderSection != null)
 				{
+					if (retainingSource)
+					{
+						renderSection.setRenderingEnabled(true);
+						this.retainedTransitionSections.put(renderSection.pos, renderSection);
+						return;
+					}
 					this.fullDataSourceProvider.removeRetrievalRequestIf((long genPos) -> DhSectionPos.contains(renderSection.pos, genPos));
 					
 					// unfortunately we have to fully go through each set
@@ -302,6 +436,11 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 				}
 			}
 		);
+		if (activeTransition != null && retainingSource)
+		{
+			activeTransition.sourceCaptured = true;
+			activeTransition.observed = true;
+		}
 		
 		//endregion
 		
@@ -385,6 +524,14 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 			
 			node.value.setRenderingEnabled(true);
 			this.altEnabledSections.add(node.value);
+		}
+		for (LodRenderSection retained : this.retainedTransitionSections.values())
+		{
+			if (retained.canRender())
+			{
+				retained.setRenderingEnabled(true);
+				this.altEnabledSections.add(retained);
+			}
 		}
 		
 		//endregion
@@ -1423,6 +1570,11 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 						quadNode.value = null;
 					}
 				}
+				for (LodRenderSection renderSection : this.retainedTransitionSections.values())
+				{
+					renderSection.close();
+				}
+				this.retainedTransitionSections.clear();
 			}
 			finally
 			{
@@ -1435,6 +1587,22 @@ public class LodQuadTree extends QuadTree<LodRenderSection> implements IDebugRen
 	}
 	
 	//endregion base methods
+
+	private static final class Transition
+	{
+		private final UUID id;
+		private final DhBlockPos2D sourceCenter;
+		private final DhBlockPos2D targetCenter;
+		private volatile boolean sourceCaptured;
+		private volatile boolean observed;
+
+		private Transition(UUID id, DhBlockPos2D sourceCenter, DhBlockPos2D targetCenter)
+		{
+			this.id = id;
+			this.sourceCenter = sourceCenter;
+			this.targetCenter = targetCenter;
+		}
+	}
 	
 	
 	

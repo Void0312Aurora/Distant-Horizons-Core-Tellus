@@ -328,6 +328,29 @@ public class DhClientLevel extends AbstractDhLevel implements IDhClientLevel
 	
 	@Override 
 	public boolean isRendering() { return this.clientside.isRendering(); }
+
+	@Override
+	public boolean beginSeamTransition(UUID transitionId, int targetBlockX, int targetBlockZ)
+	{
+		ClientLevelModule.ClientRenderState state = this.clientside.ClientRenderStateRef.get();
+		return state != null && state.quadtree.beginSeamTransition(
+			transitionId,
+			new com.seibel.distanthorizons.core.pos.blockPos.DhBlockPos2D(targetBlockX, targetBlockZ));
+	}
+
+	@Override
+	public boolean isSeamTransitionReady(UUID transitionId)
+	{
+		ClientLevelModule.ClientRenderState state = this.clientside.ClientRenderStateRef.get();
+		return state != null && state.quadtree.isSeamTransitionReady(transitionId);
+	}
+
+	@Override
+	public void endSeamTransition(UUID transitionId, boolean committed)
+	{
+		ClientLevelModule.ClientRenderState state = this.clientside.ClientRenderStateRef.get();
+		if (state != null) state.quadtree.endSeamTransition(transitionId, committed);
+	}
 	
 	public boolean shouldProcessChunkUpdate(DhChunkPos chunkPos)
 	{

@@ -42,7 +42,6 @@ import com.seibel.distanthorizons.core.util.LodUtil;
 import com.seibel.distanthorizons.core.util.objects.pooling.PhantomArrayList.PhantomArrayListCheckout;
 import com.seibel.distanthorizons.core.util.threading.PriorityTaskPicker;
 import com.seibel.distanthorizons.core.util.threading.ThreadPoolUtil;
-import com.seibel.distanthorizons.core.wrapperInterfaces.minecraft.IMinecraftClientWrapper;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,7 +59,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public class LodRenderSection implements IDebugRenderable, AutoCloseable
 {
 	private static final DhLogger LOGGER = new DhLoggerBuilder().build();
-	private static final IMinecraftClientWrapper MC = SingletonInjector.INSTANCE.get(IMinecraftClientWrapper.class);
 	private static final AbstractDebugWireframeRenderer DEBUG_RENDERER = SingletonInjector.INSTANCE.get(AbstractDebugWireframeRenderer.class);
 	
 	
@@ -317,7 +315,7 @@ public class LodRenderSection implements IDebugRenderable, AutoCloseable
 	private boolean isAdjacentPosSameDetailLevel(EDhDirection direction)
 	{
 		long adjPos = DhSectionPos.getAdjacentPos(this.pos, direction);
-		byte detailLevel = this.quadTree.calcExpectedDetailLevel(new DhBlockPos2D(MC.getPlayerBlockPos()), adjPos);
+		byte detailLevel = this.quadTree.calcExpectedDetailLevel(this.quadTree.getDetailCenterBlockPos(), adjPos);
 		detailLevel += DhSectionPos.SECTION_MINIMUM_DETAIL_LEVEL;
 		return detailLevel == DhSectionPos.getDetailLevel(this.pos);
 	}
